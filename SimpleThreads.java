@@ -28,10 +28,45 @@ public class SimpleThreads {
         }
     }
 
+    private static class PrimeCalculator implements Runnable {
+        public void run() {
+            long number = 2;
+            try {
+                while (true) {
+                    if (isPrime(number)) {
+                        threadMessage(number + " is prime");
+                    }
+                    number++;
+                    // Check if we were interrupted every 1024 iterations
+                    if (number % 1024 == 0 && Thread.interrupted()) {
+                        threadMessage("Prime calculation interrupted at " + number);
+                        throw new InterruptedException();
+                    }
+                }
+            } catch (InterruptedException e) {
+                threadMessage("I wasn't done! Last checked prime: " + (number - 1));
+            }
+        }
+
+        private boolean isPrime(long n) {
+            if (n < 2) return false;
+            if (n == 2) return true;
+            if (n % 2 == 0) return false;
+            for (long i = 3; i * i <= n; i += 2) {
+                if (n % i == 0) return false;
+                // Also check interruption inside heavy computation
+                if (i % 256 == 0 && Thread.currentThread().isInterrupted()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
     public static void main(String args[])
         throws InterruptedException {
 
-        // Delay, in milliseconds before we interrupt MessageLoop thread (default one hour)
+        // Delay, in milliseconds before we interrupt threads (default one hour)
         long patience = 1000 * 60 * 60;
 
         // If command line argument present, gives patience in seconds
@@ -44,26 +79,35 @@ public class SimpleThreads {
             }
         }
 
+        // --- MessageLoop thread (I/O-bound, same as original) ---
         threadMessage("Starting MessageLoop thread");
         long startTime = System.currentTimeMillis();
-        Thread t = new Thread(new MessageLoop());
+        Thread t1 = new Thread(new MessageLoop(), "MessageLoop");
+        t1.start();
 
-	// Put the MessageLoop thread to run
-        t.start();
+        // --- PrimeCalculator thread (CPU-intensive) ---
+        threadMessage("Starting PrimeCalculator thread");
+        Thread t2 = new Thread(new PrimeCalculator(), "PrimeCalculator");
+        t2.start();
 
-        threadMessage("Waiting for MessageLoop thread to finish");
-	
-        // loop until MessageLoop thread exits
-        while (t.isAlive()) {
+        threadMessage("Waiting for threads to finish");
+
+        while (t1.isAlive() || t2.isAlive()) {
             threadMessage("Still waiting...");
-            // Wait maximum of 1 second for MessageLoop thread to finish
-            t.join(1000);
-            if (((System.currentTimeMillis() - startTime) > patience) && t.isAlive()) {
-                threadMessage("Tired of waiting!");
-		// Force the interruption of the MainLoop thread
-                t.interrupt();
-                // ...and wait for it to finish -- shouldn't be long now 
-                t.join();
+            t1.join(1000);
+            t2.join(1000);
+            boolean timedOut = (System.currentTimeMillis() - startTime) > patience;
+            if (timedOut) {
+                if (t1.isAlive()) {
+                    threadMessage("Tired of waiting for MessageLoop!");
+                    t1.interrupt();
+                    t1.join();
+                }
+                if (t2.isAlive()) {
+                    threadMessage("Tired of waiting for PrimeCalculator!");
+                    t2.interrupt();
+                    t2.join();
+                }
             }
         }
         threadMessage("Finally!");
